@@ -1,0 +1,504 @@
+
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>類似荒野亂鬥的簡易對戰遊戲 - 玩家血量300</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; background: #f0f0f0; }
+        #gameArea { position: relative; width: 400px; height: 400px; margin: 20px auto; background: #eee; border: 2px solid #333; overflow: hidden; }
+        #player { position: absolute; width: 30px; height: 30px; background: blue; border-radius: 50%; transition: all 0.1s ease; left: 185px; top: 185px; }
+        .enemy { position: absolute; width: 30px; height: 30px; background: red; border-radius: 50%; }
+        .enemy-dashing { background: orange; }
+        .gem { position: absolute; width: 15px; height: 15px; background: green; border-radius: 50%; }
+        .wall { position: absolute; width: 50px; height: 50px; background: gray; }
+        .bullet { position: absolute; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 10px solid cyan; }
+        .specialBullet { position: absolute; width: 0; height: 0; border-left: 10px solid transparent; border-right: 10px solid transparent; border-bottom: 20px solid purple; }
+        .piercingBullet { position: absolute; width: 6px; height: 12px; background: lime; }
+        .enemyBullet { position: absolute; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 10px solid yellow; }
+        button { padding: 10px 20px; margin: 10px; background: #4CAF50; color: white; border: none; cursor: pointer; }
+        button:hover { background: #45a049; }
+        #status { color: blue; margin: 10px; }
+        #score { font-size: 20px; margin: 10px; }
+        #health { font-size: 20px; margin: 10px; color: red; }
+        #gameOver { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 30px; color: red; display: none; }
+        #victory { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 30px; color: green; display: none; }
+        #bulletStatus { position: absolute; top: 20px; right: 20px; font-size: 16px; color: black; }
+        #specialStatus { position: absolute; top: 50px; right: 20px; font-size: 16px; color: purple; }
+        #piercingStatus { position: absolute; top: 80px; right: 20px; font-size: 16px; color: lime; }
+        #enemyStatus { position: absolute; top: 110px; right: 20px; font-size: 16px; color: orange; display: none; }
+    </style>
+</head>
+<body>
+    <h1>類似荒野亂鬥的簡易對戰遊戲 - 玩家血量300</h1>
+    <p>使用上下左右鍵控制角色移動，按 Z 鍵發射普通子彈，按 X 鍵發射特殊攻擊（爆炸範圍），按 C 鍵發射貫穿子彈，按 Space 加速奔跑！收集綠色寶石，射擊紅色敵人（衝刺時為橙色），避免碰撞或被射中。</p>
+
+    <div id="gameArea">
+        <div id="player"></div>
+        <div id="gameOver">Game Over!</div>
+        <div id="victory">Victory!</div>
+        <div id="bulletStatus">子彈: 10/10</div>
+        <div id="specialStatus">特殊: 就緒</div>
+        <div id="piercingStatus">貫穿: 就緒</div>
+        <div id="enemyStatus">敵人衝刺中！</div>
+    </div>
+
+    <div id="score">寶石: 0</div>
+    <div id="health">生命: 300</div>
+
+    <button onclick="toggleGame()">開始/停止遊戲</button>
+    <div id="status">狀態：遊戲尚未開始</div>
+
+    <script>
+        let player = { x: 185, y: 185, dx: 0, dy: 0, maxSpeed: 5, health: 300 };
+        let enemies = [];
+        let gems = [];
+        let walls = [];
+        let bullets = [];
+        let specialBullets = [];
+        let piercingBullets = [];
+        let enemyBullets = [];
+        let gameRunning = false;
+        let score = 0;
+        let gameOver = false;
+        let victory = false;
+        let bulletCount = 10;
+        let maxBullets = 10;
+        let reloadTime = 3000;
+        let isReloading = false;
+        let lastShotTime = 0;
+        let fireRate = 300;
+        let lastEnemyShotTime = 0;
+        let enemyFireRate = 1000;
+        let lastSpecialTime = 0;
+        let specialCooldown = 10000;
+        let isSpecialCooling = false;
+        let lastPiercingTime = 0;
+        let piercingCooldown = 5000;
+        let isPiercingCooling = false;
+
+        const gameArea = document.getElementById('gameArea');
+        const playerEl = document.getElementById('player');
+        const gameOverEl = document.getElementById('gameOver');
+        const victoryEl = document.getElementById('victory');
+        const statusEl = document.getElementById('status');
+        const scoreEl = document.getElementById('score');
+        const healthEl = document.getElementById('health');
+        const bulletStatusEl = document.getElementById('bulletStatus');
+        const specialStatusEl = document.getElementById('specialStatus');
+        const piercingStatusEl = document.getElementById('piercingStatus');
+        const enemyStatusEl = document.getElementById('enemyStatus');
+
+        const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, KeyZ: false, KeyX: false, KeyC: false, Space: false };
+
+        document.addEventListener('keydown', (event) => {
+            if (event.code in keys) keys[event.code] = true;
+            event.preventDefault();
+        });
+
+        document.addEventListener('keyup', (event) => {
+            if (event.code in keys) keys[event.code] = false;
+        });
+
+        function updatePlayerSpeed() {
+            player.dx = 0;
+            player.dy = 0;
+            let speed = keys.Space ? player.maxSpeed * 1.5 : player.maxSpeed;
+            if (keys.ArrowLeft) player.dx = -speed;
+            if (keys.ArrowRight) player.dx = speed;
+            if (keys.ArrowUp) player.dy = -speed;
+            if (keys.ArrowDown) player.dy = speed;
+            if (keys.KeyZ) shootBullet();
+            if (keys.KeyX) shootSpecial();
+            if (keys.KeyC) shootPiercing();
+        }
+
+        function shootBullet() {
+            if (gameRunning && !gameOver && !victory && !isReloading && bulletCount > 0 && Date.now() - lastShotTime >= fireRate) {
+                let bullet = { x: player.x + 15, y: player.y - 10, speed: -5, el: document.createElement('div') };
+                bullet.el.className = 'bullet';
+                bullet.el.style.left = bullet.x + 'px';
+                bullet.el.style.top = bullet.y + 'px';
+                gameArea.appendChild(bullet.el);
+                bullets.push(bullet);
+                bulletCount--;
+                lastShotTime = Date.now();
+                updateBulletStatus();
+                if (bulletCount <= 0) startReload();
+            }
+        }
+
+        function shootSpecial() {
+            if (gameRunning && !gameOver && !victory && !isSpecialCooling) {
+                let special = { x: player.x + 15, y: player.y - 20, speed: -3, el: document.createElement('div') };
+                special.el.className = 'specialBullet';
+                special.el.style.left = special.x + 'px';
+                special.el.style.top = special.y + 'px';
+                gameArea.appendChild(special.el);
+                specialBullets.push(special);
+                lastSpecialTime = Date.now();
+                isSpecialCooling = true;
+                updateSpecialStatus();
+            }
+        }
+
+        function shootPiercing() {
+            if (gameRunning && !gameOver && !victory && !isPiercingCooling) {
+                let piercing = { x: player.x + 15, y: player.y - 10, speed: -7, el: document.createElement('div'), hitEnemies: [] };
+                piercing.el.className = 'piercingBullet';
+                piercing.el.style.left = piercing.x + 'px';
+                piercing.el.style.top = piercing.y + 'px';
+                gameArea.appendChild(piercing.el);
+                piercingBullets.push(piercing);
+                lastPiercingTime = Date.now();
+                isPiercingCooling = true;
+                updatePiercingStatus();
+            }
+        }
+
+        function startReload() {
+            isReloading = true;
+            let startTime = Date.now();
+            let reloadInterval = setInterval(() => {
+                let elapsed = Date.now() - startTime;
+                let remaining = Math.max(0, (reloadTime - elapsed) / 1000).toFixed(1);
+                bulletStatusEl.textContent = `補充中: ${remaining}秒`;
+                if (elapsed >= reloadTime) {
+                    clearInterval(reloadInterval);
+                    bulletCount = maxBullets;
+                    isReloading = false;
+                    updateBulletStatus();
+                }
+            }, 100);
+        }
+
+        function updateBulletStatus() {
+            if (!isReloading) bulletStatusEl.textContent = `子彈: ${bulletCount}/${maxBullets}`;
+        }
+
+        function updateSpecialStatus() {
+            if (isSpecialCooling) {
+                let elapsed = Date.now() - lastSpecialTime;
+                let remaining = Math.max(0, (specialCooldown - elapsed) / 1000).toFixed(1);
+                specialStatusEl.textContent = `特殊冷卻: ${remaining}秒`;
+                if (elapsed >= specialCooldown) {
+                    isSpecialCooling = false;
+                    specialStatusEl.textContent = `特殊: 就緒`;
+                }
+            } else {
+                specialStatusEl.textContent = `特殊: 就緒`;
+            }
+        }
+
+        function updatePiercingStatus() {
+            if (isPiercingCooling) {
+                let elapsed = Date.now() - lastPiercingTime;
+                let remaining = Math.max(0, (piercingCooldown - elapsed) / 1000).toFixed(1);
+                piercingStatusEl.textContent = `貫穿冷卻: ${remaining}秒`;
+                if (elapsed >= piercingCooldown) {
+                    isPiercingCooling = false;
+                    piercingStatusEl.textContent = `貫穿: 就緒`;
+                }
+            } else {
+                piercingStatusEl.textContent = `貫穿: 就緒`;
+            }
+        }
+
+        function updateEnemyStatus() {
+            let isAnyDashing = enemies.some(enemy => enemy.isDashing);
+            enemyStatusEl.style.display = isAnyDashing ? 'block' : 'none';
+        }
+
+        function toggleGame() {
+            gameRunning = !gameRunning;
+            gameOver = false;
+            victory = false;
+            gameOverEl.style.display = 'none';
+            victoryEl.style.display = 'none';
+            enemyStatusEl.style.display = 'none';
+            if (gameRunning) {
+                score = 0;
+                player.health = 300;
+                bulletCount = maxBullets;
+                isReloading = false;
+                isSpecialCooling = false;
+                isPiercingCooling = false;
+                updateScore();
+                updateHealth();
+                updateBulletStatus();
+                updateSpecialStatus();
+                updatePiercingStatus();
+                clearElements();
+                createWalls();
+                createEnemies(3); // 增加到3個敵人
+                createGems(5);
+                statusEl.textContent = '遊戲開始！移動、射擊、收集寶石';
+            } else {
+                statusEl.textContent = '遊戲暫停';
+            }
+        }
+
+        function clearElements() {
+            [enemies, gems, walls, bullets, specialBullets, piercingBullets, enemyBullets].forEach(arr => arr.forEach(item => item.el?.remove()));
+            enemies = []; gems = []; walls = []; bullets = []; specialBullets = []; piercingBullets = []; enemyBullets = [];
+        }
+
+        function createWalls() {
+            walls = [
+                { x: 50, y: 100, width: 50, height: 50, el: createElement('wall', 50, 100) },
+                { x: 300, y: 200, width: 50, height: 50, el: createElement('wall', 300, 200) }
+            ];
+        }
+
+        function createEnemies(count) {
+            for (let i = 0; i < count; i++) {
+                let enemy = { 
+                    x: Math.random() * 370, 
+                    y: Math.random() * 370, 
+                    speed: 2, 
+                    health: 3, // 敵人生命值提升到3
+                    el: createElement('enemy'),
+                    isDashing: false,
+                    dashDuration: 2000,
+                    dashCooldown: 10000,
+                    lastDashTime: 0
+                };
+                enemy.el.style.left = enemy.x + 'px';
+                enemy.el.style.top = enemy.y + 'px';
+                enemies.push(enemy);
+            }
+        }
+
+        function createGems(count) {
+            for (let i = 0; i < count; i++) {
+                let gem = { x: Math.random() * 385, y: Math.random() * 385, el: createElement('gem') };
+                gem.el.style.left = gem.x + 'px';
+                gem.el.style.top = gem.y + 'px';
+                gems.push(gem);
+            }
+        }
+
+        function createElement(className, x = 0, y = 0) {
+            let el = document.createElement('div');
+            el.className = className;
+            el.style.left = x + 'px';
+            el.style.top = y + 'px';
+            gameArea.appendChild(el);
+            return el;
+        }
+
+        function updatePlayerPosition() {
+            updatePlayerSpeed();
+            let newX = player.x + player.dx;
+            let newY = player.y + player.dy;
+            if (!checkCollision(newX, newY, 30, 30, walls) && newX >= 0 && newX <= 370 && newY >= 0 && newY <= 370) {
+                player.x = newX;
+                player.y = newY;
+            }
+            playerEl.style.left = player.x + 'px';
+            playerEl.style.top = player.y + 'px';
+        }
+
+        function updateEnemies() {
+            enemies.forEach((enemy, index) => {
+                let currentSpeed = enemy.isDashing ? enemy.speed * 2 : enemy.speed;
+                let dx = player.x - enemy.x;
+                let dy = player.y - enemy.y;
+                let dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 0) {
+                    enemy.x += (dx / dist) * currentSpeed;
+                    enemy.y += (dy / dist) * currentSpeed;
+                }
+                enemy.el.style.left = enemy.x + 'px';
+                enemy.el.style.top = enemy.y + 'px';
+                enemy.el.className = enemy.isDashing ? 'enemy enemy-dashing' : 'enemy';
+
+                // 敵人衝刺邏輯
+                let currentTime = Date.now();
+                if (!enemy.isDashing && currentTime - enemy.lastDashTime >= enemy.dashCooldown && Math.random() < 0.3) {
+                    enemy.isDashing = true;
+                    enemy.lastDashTime = currentTime;
+                }
+                if (enemy.isDashing && currentTime - enemy.lastDashTime >= enemy.dashDuration) {
+                    enemy.isDashing = false;
+                }
+
+                // 敵人射擊
+                if (Date.now() - lastEnemyShotTime >= enemyFireRate) {
+                    let eBullet = { x: enemy.x + 15, y: enemy.y + 40, speed: 4, el: document.createElement('div') };
+                    eBullet.el.className = 'enemyBullet';
+                    eBullet.el.style.left = eBullet.x + 'px';
+                    eBullet.el.style.top = eBullet.y + 'px';
+                    gameArea.appendChild(eBullet.el);
+                    enemyBullets.push(eBullet);
+                    lastEnemyShotTime = Date.now();
+                }
+
+                // 碰撞玩家
+                if (checkCollision(enemy.x, enemy.y, 30, 30, [{ x: player.x, y: player.y, width: 30, height: 30 }])) {
+                    player.health -= enemy.isDashing ? 20 : 10; // 衝刺扣20，普通扣10
+                    updateHealth();
+                    enemies.splice(index, 1);
+                    enemy.el.remove();
+                    if (player.health <= 0) endGame(false);
+                }
+            });
+            updateEnemyStatus();
+        }
+
+        function updateGems() {
+            gems.forEach((gem, index) => {
+                if (checkCollision(player.x, player.y, 30, 30, [{ x: gem.x, y: gem.y, width: 15, height: 15 }])) {
+                    score++;
+                    updateScore();
+                    gems.splice(index, 1);
+                    gem.el.remove();
+                    if (score >= 10) endGame(true);
+                }
+            });
+        }
+
+        function updateBullets() {
+            bullets.forEach((bullet, bIndex) => {
+                bullet.y += bullet.speed;
+                bullet.el.style.top = bullet.y + 'px';
+                if (bullet.y < 0) {
+                    bullet.el.remove();
+                    bullets.splice(bIndex, 1);
+                    return;
+                }
+                enemies.forEach((enemy, eIndex) => {
+                    if (checkCollision(bullet.x, bullet.y, 10, 10, [{ x: enemy.x, y: enemy.y, width: 30, height: 30 }])) {
+                        bullet.el.remove();
+                        bullets.splice(bIndex, 1);
+                        enemy.health -= 1;
+                        if (enemy.health <= 0) {
+                            enemy.el.remove();
+                            enemies.splice(eIndex, 1);
+                            score += 2;
+                            updateScore();
+                        }
+                        if (enemies.length === 0 && score >= 10) endGame(true);
+                    }
+                });
+            });
+
+            specialBullets.forEach((special, sIndex) => {
+                special.y += special.speed;
+                special.el.style.top = special.y + 'px';
+                if (special.y < 0) {
+                    special.el.remove();
+                    specialBullets.splice(sIndex, 1);
+                    return;
+                }
+                enemies.forEach((enemy, eIndex) => {
+                    if (checkCollision(special.x, special.y, 20, 20, [{ x: enemy.x, y: enemy.y, width: 30, height: 30 }])) {
+                        special.el.remove();
+                        specialBullets.splice(sIndex, 1);
+                        enemies.forEach((otherEnemy, oIndex) => {
+                            let dist = Math.sqrt((otherEnemy.x - special.x) ** 2 + (otherEnemy.y - special.y) ** 2);
+                            if (dist < 50) {
+                                otherEnemy.health -= 2;
+                                if (otherEnemy.health <= 0) {
+                                    otherEnemy.el.remove();
+                                    enemies.splice(oIndex, 1);
+                                    score += 3;
+                                    updateScore();
+                                }
+                            }
+                        });
+                        if (enemies.length === 0 && score >= 10) endGame(true);
+                    }
+                });
+            });
+
+            piercingBullets.forEach((piercing, pIndex) => {
+                piercing.y += piercing.speed;
+                piercing.el.style.top = piercing.y + 'px';
+                if (piercing.y < 0) {
+                    piercing.el.remove();
+                    piercingBullets.splice(pIndex, 1);
+                    return;
+                }
+                enemies.forEach((enemy, eIndex) => {
+                    if (!piercing.hitEnemies.includes(eIndex) && checkCollision(piercing.x, piercing.y, 6, 12, [{ x: enemy.x, y: enemy.y, width: 30, height: 30 }])) {
+                        piercing.hitEnemies.push(eIndex);
+                        enemy.health -= 1;
+                        score += 2;
+                        updateScore();
+                        if (enemy.health <= 0) {
+                            enemy.el.remove();
+                            enemies.splice(eIndex, 1);
+                        }
+                        if (enemies.length === 0 && score >= 10) endGame(true);
+                    }
+                });
+            });
+
+            enemyBullets.forEach((eBullet, ebIndex) => {
+                let dx = player.x - eBullet.x + 15;
+                let dy = player.y - eBullet.y + 15;
+                let dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 0) {
+                    eBullet.x += (dx / dist) * eBullet.speed;
+                    eBullet.y += (dy / dist) * eBullet.speed;
+                }
+                eBullet.el.style.left = eBullet.x + 'px';
+                eBullet.el.style.top = eBullet.y + 'px';
+                if (checkCollision(eBullet.x, eBullet.y, 10, 10, [{ x: player.x, y: player.y, width: 30, height: 30 }])) {
+                    eBullet.el.remove();
+                    enemyBullets.splice(ebIndex, 1);
+                    player.health -= 5; // 敵人子彈扣5點
+                    updateHealth();
+                    if (player.health <= 0) endGame(false);
+                }
+            });
+        }
+
+        function checkCollision(x1, y1, w1, h1, obstacles) {
+            for (let obs of obstacles) {
+                let obsX = obs.x;
+                let obsY = obs.y;
+                let obsW = obs.width || 50;
+                let obsH = obs.height || 50;
+                if (x1 < obsX + obsW && x1 + w1 > obsX &&
+                    y1 < obsY + obsH && y1 + h1 > obsY) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function updateScore() {
+            scoreEl.textContent = `寶石: ${score}`;
+        }
+
+        function updateHealth() {
+            healthEl.textContent = `生命: ${player.health}`;
+        }
+
+        function endGame(isVictory) {
+            gameRunning = false;
+            if (isVictory) {
+                victoryEl.style.display = 'block';
+                statusEl.textContent = `勝利！最終寶石: ${score}`;
+            } else {
+                gameOverEl.style.display = 'block';
+                statusEl.textContent = `遊戲結束！最終寶石: ${score}`;
+            }
+        }
+
+        setInterval(() => {
+            if (gameRunning && !gameOver && !victory) {
+                updatePlayerPosition();
+                updateEnemies();
+                updateGems();
+                updateBullets();
+                updateSpecialStatus();
+                updatePiercingStatus();
+            }
+        }, 50);
+    </script>
+</body>
+</html>
